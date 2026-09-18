@@ -1,5 +1,9 @@
 async page => {
 
+    // ============================================================
+    // CONFIG
+    // ============================================================
+
     const FROM_DATE = "2026-08-01";
     const TO_DATE = "2026-08-31";
     const REPORT_NAME = "Customer Complaints-Generic";
@@ -19,6 +23,11 @@ async page => {
         "December"
     ];
 
+
+    // ============================================================
+    // DATE HELPERS
+    // ============================================================
+
     function parseDate(value) {
 
         const p = value.split("-").map(Number);
@@ -29,6 +38,7 @@ async page => {
             day: p[2]
         };
     }
+
 
     function expectedInputValue(dateString) {
 
@@ -43,6 +53,11 @@ async page => {
         return day + "-" + month + "-" + d.year;
     }
 
+
+    // ============================================================
+    // OPEN CALENDAR
+    // ============================================================
+
     async function openCalendar(buttonName) {
 
         const button =
@@ -51,6 +66,7 @@ async page => {
             });
 
         if (await button.count() !== 1) {
+
             throw new Error(
                 "Calendar button not found: " +
                 buttonName
@@ -69,6 +85,7 @@ async page => {
             });
 
         if (await dialog.count() !== 1) {
+
             throw new Error(
                 "Date picker did not open"
             );
@@ -76,6 +93,11 @@ async page => {
 
         return dialog;
     }
+
+
+    // ============================================================
+    // CALENDAR STATE
+    // ============================================================
 
     async function getCalendarState(dialog) {
 
@@ -104,6 +126,11 @@ async page => {
         };
     }
 
+
+    // ============================================================
+    // GO TO TARGET MONTH
+    // ============================================================
+
     async function goToMonth(
         dialog,
         targetDate
@@ -112,7 +139,11 @@ async page => {
         const target =
             parseDate(targetDate);
 
-        for (let attempt = 0; attempt < 24; attempt++) {
+        for (
+            let attempt = 0;
+            attempt < 24;
+            attempt++
+        ) {
 
             const state =
                 await getCalendarState(dialog);
@@ -121,6 +152,7 @@ async page => {
                 state.year === target.year &&
                 state.monthIndex === target.month
             ) {
+
                 console.log(
                     "Calendar reached " +
                     state.monthName +
@@ -139,9 +171,13 @@ async page => {
                 target.year * 12 +
                 target.month;
 
-            if (targetPosition > currentPosition) {
+            if (
+                targetPosition > currentPosition
+            ) {
 
-                console.log("Clicking > Next Month");
+                console.log(
+                    "Clicking > Next Month"
+                );
 
                 const next =
                     dialog.getByRole("button", {
@@ -154,7 +190,9 @@ async page => {
 
             } else {
 
-                console.log("Clicking < Previous Month");
+                console.log(
+                    "Clicking < Previous Month"
+                );
 
                 const previous =
                     dialog.getByRole("button", {
@@ -173,6 +211,11 @@ async page => {
             "Could not reach " + targetDate
         );
     }
+
+
+    // ============================================================
+    // SELECT DATE
+    // ============================================================
 
     async function selectDate(
         inputName,
@@ -202,6 +245,7 @@ async page => {
         const current =
             await input.inputValue();
 
+
         /*
          * If the requested date is already selected,
          * don't open the calendar again.
@@ -218,15 +262,26 @@ async page => {
             return current;
         }
 
+
+        // --------------------------------------------------------
+        // OPEN CALENDAR
+        // --------------------------------------------------------
+
         let dialog =
             await openCalendar(
                 calendarButtonName
             );
 
+
+        // --------------------------------------------------------
+        // MOVE TO TARGET MONTH
+        // --------------------------------------------------------
+
         await goToMonth(
             dialog,
             targetDate
         );
+
 
         /*
          * Salesforce puts the calendar popup at
@@ -262,7 +317,9 @@ async page => {
             );
         });
 
+
         await page.waitForTimeout(300);
+
 
         /*
          * IMPORTANT:
@@ -277,11 +334,13 @@ async page => {
             );
 
         if (await cell.count() !== 1) {
+
             throw new Error(
                 "Date cell not found: " +
                 targetDate
             );
         }
+
 
         const disabled =
             await cell.getAttribute(
@@ -289,32 +348,39 @@ async page => {
             );
 
         if (disabled === "true") {
+
             throw new Error(
                 "Date is disabled: " +
                 targetDate
             );
         }
 
+
         console.log(
             "Clicking exact date: " +
             targetDate
         );
+
 
         await cell.click({
             force: true,
             timeout: 5000
         });
 
+
         await page.waitForTimeout(800);
+
 
         const after =
             await input.inputValue();
+
 
         console.log(
             inputName +
             " value: " +
             after
         );
+
 
         /*
          * Verify the requested date, rather than
@@ -336,12 +402,14 @@ async page => {
         return after;
     }
 
+
     // ============================================================
     // SURVEY REPORT
     // ============================================================
 
     const SURVEY_URL =
         "https://ramrajcotton--rrpartial.sandbox.lightning.force.com/lightning/n/SurveyReport";
+
 
     if (
         !page.url().includes(
@@ -359,6 +427,11 @@ async page => {
         await page.waitForTimeout(1500);
     }
 
+
+    // ------------------------------------------------------------
+    // WAIT FOR SURVEY REPORT
+    // ------------------------------------------------------------
+
     await page.getByRole("heading", {
         name: "Survey Report",
         exact: true
@@ -367,9 +440,11 @@ async page => {
         timeout: 30000
     });
 
+
     console.log(
         "Survey Report loaded."
     );
+
 
     // ============================================================
     // FROM DATE
@@ -381,6 +456,7 @@ async page => {
         FROM_DATE
     );
 
+
     // ============================================================
     // TO DATE
     // ============================================================
@@ -391,6 +467,7 @@ async page => {
         TO_DATE
     );
 
+
     // ============================================================
     // SEARCH
     // ============================================================
@@ -398,6 +475,7 @@ async page => {
     console.log(
         "Finding Survey Report Search button..."
     );
+
 
     /*
      * There are two Search buttons:
@@ -413,10 +491,11 @@ async page => {
 
     const searchButton =
         page.locator(
-            'button.slds-button_brand'
+            "button.slds-button_brand"
         ).filter({
             hasText: "Search"
         });
+
 
     if (await searchButton.count() !== 1) {
 
@@ -427,15 +506,19 @@ async page => {
         );
     }
 
+
     console.log(
         "Clicking Survey Report Search..."
     );
+
 
     await searchButton.click({
         force: true
     });
 
+
     await page.waitForTimeout(1500);
+
 
     // ============================================================
     // CUSTOMER COMPLAINTS-GENERIC
@@ -446,6 +529,7 @@ async page => {
         REPORT_NAME
     );
 
+
     const report =
         page.getByText(
             REPORT_NAME,
@@ -453,6 +537,7 @@ async page => {
                 exact: true
             }
         ).first();
+
 
     if (await report.count() !== 1) {
 
@@ -462,16 +547,20 @@ async page => {
         );
     }
 
+
     console.log(
         "Selecting " +
         REPORT_NAME
     );
 
+
     await report.click({
         force: true
     });
 
+
     await page.waitForTimeout(700);
+
 
     // ============================================================
     // DOWNLOAD EXCEL
@@ -481,11 +570,13 @@ async page => {
         "Looking for Download Excel..."
     );
 
+
     const downloadButton =
         page.getByRole("button", {
             name: "Download Excel",
             exact: true
         });
+
 
     if (await downloadButton.count() !== 1) {
 
@@ -494,15 +585,37 @@ async page => {
         );
     }
 
+
     console.log(
         "Clicking Download Excel..."
     );
+
+
+    /*
+     * IMPORTANT:
+     *
+     * This is intentionally just a click.
+     *
+     * We do NOT use:
+     * - page.waitForEvent("download")
+     * - newCDPSession()
+     * - Browser.setDownloadBehavior()
+     *
+     * Those do not work reliably with the
+     * attached Chrome session.
+     */
 
     await downloadButton.click({
         force: true
     });
 
+
     await page.waitForTimeout(1500);
+
+
+    // ============================================================
+    // SUCCESS
+    // ============================================================
 
     return {
         success: true,
