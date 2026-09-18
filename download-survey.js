@@ -1,9 +1,5 @@
 async page => {
 
-    // ============================================================
-    // CONFIG
-    // ============================================================
-
     const FROM_DATE = "2026-08-01";
     const TO_DATE = "2026-08-31";
     const REPORT_NAME = "Customer Complaints-Generic";
@@ -23,11 +19,6 @@ async page => {
         "December"
     ];
 
-
-    // ============================================================
-    // DATE HELPERS
-    // ============================================================
-
     function parseDate(value) {
 
         const p = value.split("-").map(Number);
@@ -38,7 +29,6 @@ async page => {
             day: p[2]
         };
     }
-
 
     function expectedInputValue(dateString) {
 
@@ -52,11 +42,6 @@ async page => {
 
         return day + "-" + month + "-" + d.year;
     }
-
-
-    // ============================================================
-    // OPEN CALENDAR
-    // ============================================================
 
     async function openCalendar(buttonName) {
 
@@ -94,11 +79,6 @@ async page => {
         return dialog;
     }
 
-
-    // ============================================================
-    // CALENDAR STATE
-    // ============================================================
-
     async function getCalendarState(dialog) {
 
         const heading =
@@ -125,11 +105,6 @@ async page => {
             year: year
         };
     }
-
-
-    // ============================================================
-    // GO TO TARGET MONTH
-    // ============================================================
 
     async function goToMonth(
         dialog,
@@ -212,11 +187,6 @@ async page => {
         );
     }
 
-
-    // ============================================================
-    // SELECT DATE
-    // ============================================================
-
     async function selectDate(
         inputName,
         calendarButtonName,
@@ -245,7 +215,6 @@ async page => {
         const current =
             await input.inputValue();
 
-
         /*
          * If the requested date is already selected,
          * don't open the calendar again.
@@ -262,26 +231,15 @@ async page => {
             return current;
         }
 
-
-        // --------------------------------------------------------
-        // OPEN CALENDAR
-        // --------------------------------------------------------
-
         let dialog =
             await openCalendar(
                 calendarButtonName
             );
 
-
-        // --------------------------------------------------------
-        // MOVE TO TARGET MONTH
-        // --------------------------------------------------------
-
         await goToMonth(
             dialog,
             targetDate
         );
-
 
         /*
          * Salesforce puts the calendar popup at
@@ -317,9 +275,7 @@ async page => {
             );
         });
 
-
         await page.waitForTimeout(300);
-
 
         /*
          * IMPORTANT:
@@ -341,7 +297,6 @@ async page => {
             );
         }
 
-
         const disabled =
             await cell.getAttribute(
                 "aria-disabled"
@@ -355,32 +310,26 @@ async page => {
             );
         }
 
-
         console.log(
             "Clicking exact date: " +
             targetDate
         );
-
 
         await cell.click({
             force: true,
             timeout: 5000
         });
 
-
         await page.waitForTimeout(800);
-
 
         const after =
             await input.inputValue();
-
 
         console.log(
             inputName +
             " value: " +
             after
         );
-
 
         /*
          * Verify the requested date, rather than
@@ -402,14 +351,12 @@ async page => {
         return after;
     }
 
-
     // ============================================================
     // SURVEY REPORT
     // ============================================================
 
     const SURVEY_URL =
         "https://ramrajcotton--rrpartial.sandbox.lightning.force.com/lightning/n/SurveyReport";
-
 
     if (
         !page.url().includes(
@@ -427,11 +374,6 @@ async page => {
         await page.waitForTimeout(1500);
     }
 
-
-    // ------------------------------------------------------------
-    // WAIT FOR SURVEY REPORT
-    // ------------------------------------------------------------
-
     await page.getByRole("heading", {
         name: "Survey Report",
         exact: true
@@ -440,11 +382,9 @@ async page => {
         timeout: 30000
     });
 
-
     console.log(
         "Survey Report loaded."
     );
-
 
     // ============================================================
     // FROM DATE
@@ -456,7 +396,6 @@ async page => {
         FROM_DATE
     );
 
-
     // ============================================================
     // TO DATE
     // ============================================================
@@ -467,7 +406,6 @@ async page => {
         TO_DATE
     );
 
-
     // ============================================================
     // SEARCH
     // ============================================================
@@ -475,7 +413,6 @@ async page => {
     console.log(
         "Finding Survey Report Search button..."
     );
-
 
     /*
      * There are two Search buttons:
@@ -496,29 +433,27 @@ async page => {
             hasText: "Search"
         });
 
+    const searchCount =
+        await searchButton.count();
 
-    if (await searchButton.count() !== 1) {
+    if (searchCount !== 1) {
 
         throw new Error(
             "Survey Report Search button not uniquely found. " +
             "Count: " +
-            await searchButton.count()
+            searchCount
         );
     }
-
 
     console.log(
         "Clicking Survey Report Search..."
     );
 
-
     await searchButton.click({
         force: true
     });
 
-
     await page.waitForTimeout(1500);
-
 
     // ============================================================
     // CUSTOMER COMPLAINTS-GENERIC
@@ -529,7 +464,6 @@ async page => {
         REPORT_NAME
     );
 
-
     const report =
         page.getByText(
             REPORT_NAME,
@@ -538,29 +472,29 @@ async page => {
             }
         ).first();
 
+    const reportCount =
+        await report.count();
 
-    if (await report.count() !== 1) {
+    if (reportCount !== 1) {
 
         throw new Error(
             "Report not found: " +
-            REPORT_NAME
+            REPORT_NAME +
+            " | Count: " +
+            reportCount
         );
     }
-
 
     console.log(
         "Selecting " +
         REPORT_NAME
     );
 
-
     await report.click({
         force: true
     });
 
-
     await page.waitForTimeout(700);
-
 
     // ============================================================
     // DOWNLOAD EXCEL
@@ -570,58 +504,82 @@ async page => {
         "Looking for Download Excel..."
     );
 
-
     const downloadButton =
         page.getByRole("button", {
             name: "Download Excel",
             exact: true
         });
 
+    const downloadCount =
+        await downloadButton.count();
 
-    if (await downloadButton.count() !== 1) {
+    if (downloadCount !== 1) {
 
         throw new Error(
-            "Download Excel button not found"
+            "Download Excel button not found. " +
+            "Count: " +
+            downloadCount
         );
     }
 
+    console.log(
+        "Download Excel button found."
+    );
+
+    if (
+        !(await downloadButton.isEnabled())
+    ) {
+
+        throw new Error(
+            "Download Excel button is disabled."
+        );
+    }
+
+    console.log(
+        "Download Excel button is enabled."
+    );
 
     console.log(
         "Clicking Download Excel..."
     );
 
-
     /*
      * IMPORTANT:
      *
-     * This is intentionally just a click.
+     * This is intentionally only a click.
      *
-     * We do NOT use:
-     * - page.waitForEvent("download")
-     * - newCDPSession()
-     * - Browser.setDownloadBehavior()
+     * We are using attached Chrome:
      *
-     * Those do not work reliably with the
-     * attached Chrome session.
+     * playwright-cli -s=chrome
+     *
+     * In this mode we do NOT use:
+     *   - page.waitForEvent("download")
+     *   - newCDPSession()
+     *   - Browser.setDownloadBehavior()
+     *
+     * Chrome will save the Excel file using its
+     * normal Windows Downloads location.
+     *
+     * A PowerShell wrapper will move the new file
+     * to the project downloads directory.
      */
 
     await downloadButton.click({
         force: true
     });
 
-
     await page.waitForTimeout(1500);
 
-
-    // ============================================================
-    // SUCCESS
-    // ============================================================
+    console.log(
+        "Download Excel clicked successfully."
+    );
 
     return {
         success: true,
         fromDate: FROM_DATE,
         toDate: TO_DATE,
         report: REPORT_NAME,
-        message: "Download Excel clicked successfully"
+        message:
+            "Download Excel clicked successfully"
     };
 }
