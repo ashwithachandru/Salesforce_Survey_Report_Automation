@@ -1,0 +1,15 @@
+.env
+auth-state.json
+
+node_modules/
+chrome-automation-profile/
+downloads/
+
+browser-profile/
+.playwright-cli/
+
+playwright-report/
+test-results/
+
+*.log
+salesforce-auth-profile/
