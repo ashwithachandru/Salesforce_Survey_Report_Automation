@@ -1,0 +1,8 @@
+cd D:\Ramraj_Intern\salesforce-survey-downloader
+
+& "C:\Program Files\Google\Chrome\Application\chrome.exe" --profile-directory="Default"
+
+playwright-cli -s=chrome attach --extension=chrome
+
+playwright-cli -s=chrome run-code --filename=.\download-survey.js
+
