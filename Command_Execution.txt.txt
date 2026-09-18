@@ -4,5 +4,4 @@ cd D:\Ramraj_Intern\salesforce-survey-downloader
 
 playwright-cli -s=chrome attach --extension=chrome
 
-playwright-cli -s=chrome run-code --filename=.\download-survey.js
-
+powershell -ExecutionPolicy Bypass -File "D:\Ramraj_Intern\salesforce-survey-downloader\run-survey.ps1"
