@@ -1,3 +1,6 @@
+1) To download the excel from survey report
+
+
 cd D:\Ramraj_Intern\salesforce-survey-downloader
 
 & "C:\Program Files\Google\Chrome\Application\chrome.exe" --profile-directory="Default"
@@ -5,3 +8,40 @@ cd D:\Ramraj_Intern\salesforce-survey-downloader
 playwright-cli -s=chrome attach --extension=chrome
 
 powershell -ExecutionPolicy Bypass -File "D:\Ramraj_Intern\salesforce-survey-downloader\run-survey.ps1"
+
+----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+
+2) To upload the data into the endpoint
+
+cd D:\Ramraj_Intern\salesforce-survey-downloader
+Test-Path "D:\Ramraj_Intern\salesforce-survey-downloader\downloads\Customer Complaints-Generic_2026-08-01_to_2026-08-31.xlsx"
+node test-batch-sync.js
+
+To execute in DB
+USE DocuFlowDB;
+SELECT
+    id,
+    JSON_VALUE(custom_data, '$."Account Name"') AS [Account Name],
+    JSON_VALUE(custom_data, '$."Business Partner Code"') AS [Business Partner Code],
+    JSON_VALUE(custom_data, '$."Employee Name"') AS [Employee Name],
+    JSON_VALUE(custom_data, '$."Employee ID"') AS [Employee ID],
+    JSON_VALUE(custom_data, '$."Employee Division"') AS [Employee Division],
+    JSON_VALUE(custom_data, '$."Employee Segment"') AS [Employee Segment],
+    JSON_VALUE(custom_data, '$."Survey Date"') AS [Survey Date],
+    JSON_VALUE(custom_data, '$."Subtype of complaint"') AS [Subtype of complaint],
+    JSON_VALUE(custom_data, '$."Additional Comments"') AS [Additional Comments],
+    JSON_VALUE(custom_data, '$."Dealer/Distributor Name"') AS [Dealer/Distributor Name],
+    JSON_VALUE(custom_data, '$."BP Type"') AS [BP Type],
+    JSON_VALUE(custom_data, '$."Type of Complaint"') AS [Type of Complaint],
+    JSON_VALUE(custom_data, '$."Customer Code"') AS [Customer Code],
+    JSON_VALUE(custom_data, '$."Invoice Number"') AS [Invoice Number],
+    JSON_VALUE(custom_data, '$."Image 1"') AS [Image 1],
+    JSON_VALUE(custom_data, '$."Image 2"') AS [Image 2],
+    JSON_VALUE(custom_data, '$."Image 3"') AS [Image 3],
+    JSON_VALUE(custom_data, '$."Image 4"') AS [Image 4],
+    JSON_VALUE(custom_data, '$."Image 5"') AS [Image 5]
+FROM dbo.documents
+WHERE created_at >= '2026-09-19 07:24:00'
+  AND created_at <  '2026-09-19 07:25:00'
+ORDER BY created_at;
+
