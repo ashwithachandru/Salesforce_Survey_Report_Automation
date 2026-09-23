@@ -75,15 +75,46 @@ async function main() {
       throw new Error("No records found in the Excel file.");
     }
 
-    // For now, sync only the first record.
-    const row = rows[0];
+    // ----------------------------------------------------------
+    // Send ONLY the 3rd record
+    // ----------------------------------------------------------
 
-    console.log("Excel record found.");
+    if (rows.length < 3) {
+      throw new Error(
+        `Excel contains only ${rows.length} records. 3rd record does not exist.`
+      );
+    }
+
+    const row = rows[2];
+
+    console.log("3rd Excel record selected.");
+
     console.log(
       `Account Name: ${cleanValue(row["Account Name"])}`
     );
+
     console.log(
       `Invoice Number: ${cleanValue(row["Invoice Number"])}`
+    );
+
+    console.log(
+      `Image 1: ${cleanValue(row["Image 1"])}`
+    );
+
+    console.log(
+      `Image 2: ${cleanValue(row["Image 2"])}`
+    );
+
+    console.log(
+      `Image 3: ${cleanValue(row["Image 3"])}`
+    );
+
+    console.log(
+      `Image 4: ${cleanValue(row["Image 4"])}`
+    );
+
+    console.log(
+      `Image 5: ${cleanValue(row["Image 5"])}`
     );
 
     // ----------------------------------------------------------
@@ -138,7 +169,7 @@ async function main() {
     // 3. Build document
     // ----------------------------------------------------------
 
-    console.log("\n3. Preparing survey record...");
+    console.log("\n3. Preparing 3rd survey record...");
 
     const surveyDate =
       cleanValue(row["Survey Date"]);
@@ -150,6 +181,7 @@ async function main() {
       cleanValue(row["Invoice Number"]);
 
     const document = {
+
       // --------------------------------------------------------
       // Standard DocuFlow fields
       // --------------------------------------------------------
@@ -193,8 +225,6 @@ async function main() {
       TransType:
         "CUSTOMER COMPLAINT",
 
-      // The current single-record endpoint requires
-      // a positive amount.
       DocTotal: 1,
 
       base_amount: 1,
@@ -209,9 +239,6 @@ async function main() {
 
       // --------------------------------------------------------
       // Salesforce Survey fields
-      //
-      // These names correspond to the physical columns
-      // already present in dbo.documents.
       // --------------------------------------------------------
 
       account_name:
@@ -269,7 +296,13 @@ async function main() {
         cleanValue(row["Image 5"])
     };
 
-    console.log("\nSurvey fields being sent:");
+    // ----------------------------------------------------------
+    // Show exactly what will be sent
+    // ----------------------------------------------------------
+
+    console.log("\n========================================");
+    console.log("3RD RECORD - DATA TO BE SENT");
+    console.log("========================================");
 
     console.log(
       JSON.stringify(
@@ -307,7 +340,7 @@ async function main() {
     // ----------------------------------------------------------
 
     console.log(
-      "\n4. Syncing record using /api/sync/record..."
+      "\n4. Syncing 3rd record using /api/sync/record..."
     );
 
     const syncResponse = await fetch(SYNC_ENDPOINT, {
@@ -340,7 +373,7 @@ async function main() {
     // ----------------------------------------------------------
 
     console.log("\n========================================");
-    console.log("SYNC SUCCESSFUL");
+    console.log("3RD RECORD SYNC SUCCESSFUL");
     console.log("========================================");
 
     console.log(
@@ -351,7 +384,9 @@ async function main() {
     console.log(SYNC_ENDPOINT);
 
     console.log("\nA new token was generated for this run.");
+
   } catch (error) {
+
     console.log("\n========================================");
     console.log("ERROR");
     console.log("========================================");
