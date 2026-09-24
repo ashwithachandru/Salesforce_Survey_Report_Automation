@@ -1,9 +1,11 @@
-const XLSX = require("xlsx");
 const fs = require("fs");
 const path = require("path");
-const http = require("http");
+const xlsx = require("xlsx");
 const { execSync } = require("child_process");
-const sharp = require("sharp");
+
+// ============================================================
+// CONFIGURATION
+// ============================================================
 
 const PROJECT_DIR = __dirname;
 
@@ -13,377 +15,446 @@ const EXCEL_FILE = path.join(
     "Customer Complaints-Generic_2026-08-01_to_2026-08-31.xlsx"
 );
 
-const TEMP_DIR = path.join(
-    PROJECT_DIR,
-    "temp-images"
-);
+const DOCUFLOW_DOCUMENT_ID = "DOC-00000054";
 
-const DOWNLOAD_DIR = path.join(
-    process.env.USERPROFILE,
-    "Downloads"
-);
+const DOCUFLOW_BASE_URL =
+    "http://192.168.179.22:3000";
 
-const DOCUFLOW_LOGIN_URL =
-    "http://192.168.179.22:3000/api/auth/login";
+const DOCUFLOW_USERNAME =
+    "admin";
 
-const DOCUFLOW_SYNC_URL =
-    "http://192.168.179.22:3000/api/sync/record";
+const DOCUFLOW_PASSWORD =
+    "password123";
 
-const DOCUFLOW_USERNAME = "admin";
-const DOCUFLOW_PASSWORD = "password123";
+const IMAGE_DIR =
+    path.join(
+        PROJECT_DIR,
+        "temp-images"
+    );
 
-const RECORD_NUMBER = 3;
+// Existing Chrome user's Downloads folder.
+const CHROME_DOWNLOADS_DIR =
+    path.join(
+        process.env.USERPROFILE ||
+            "C:\\Users\\Ashwitha",
+        "Downloads"
+    );
 
-if (!fs.existsSync(TEMP_DIR)) {
-    fs.mkdirSync(TEMP_DIR, { recursive: true });
+
+// ============================================================
+// HELPERS
+// ============================================================
+
+function cleanValue(value) {
+
+    if (
+        value === null ||
+        value === undefined
+    ) {
+        return "";
+    }
+
+    return String(value).trim();
 }
 
 
-// ============================================================
-// HTTP REQUEST
-// ============================================================
+function sleep(ms) {
 
-function httpRequest(url, options = {}, body = null) {
+    return new Promise(
+        resolve => setTimeout(resolve, ms)
+    );
+}
 
-    return new Promise((resolve, reject) => {
 
-        const parsed = new URL(url);
+function detectImageType(buffer) {
 
-        const requestOptions = {
-            hostname: parsed.hostname,
-            port: parsed.port || 80,
-            path: parsed.pathname + parsed.search,
-            method: options.method || "GET",
-            headers: options.headers || {}
+    if (
+        !buffer ||
+        buffer.length < 4
+    ) {
+        return null;
+    }
+
+    // --------------------------------------------------------
+    // JPEG
+    // --------------------------------------------------------
+
+    if (
+        buffer.length >= 3 &&
+        buffer[0] === 0xFF &&
+        buffer[1] === 0xD8 &&
+        buffer[2] === 0xFF
+    ) {
+
+        return {
+            extension: ".jpg",
+            mimeType: "image/jpeg"
         };
-
-        const req = http.request(
-            requestOptions,
-            res => {
-
-                let data = "";
-
-                res.on("data", chunk => {
-                    data += chunk;
-                });
-
-                res.on("end", () => {
-
-                    let parsedData = data;
-
-                    try {
-                        parsedData = JSON.parse(data);
-                    }
-                    catch (_) {
-                    }
-
-                    resolve({
-                        status: res.statusCode,
-                        headers: res.headers,
-                        data: parsedData
-                    });
-                });
-            }
-        );
-
-        req.on("error", reject);
-
-        if (body) {
-            req.write(body);
-        }
-
-        req.end();
-    });
-}
+    }
 
 
-// ============================================================
-// DOCUFLOW LOGIN
-// ============================================================
-
-async function loginToDocuFlow() {
-
-    console.log("");
-    console.log("========================================");
-    console.log(" Logging into DocuFlow");
-    console.log("========================================");
-
-    const body = JSON.stringify({
-        username: DOCUFLOW_USERNAME,
-        password: DOCUFLOW_PASSWORD
-    });
-
-    const response = await httpRequest(
-        DOCUFLOW_LOGIN_URL,
-        {
-            method: "POST",
-            headers: {
-                "Content-Type": "application/json",
-                "Content-Length": Buffer.byteLength(body)
-            }
-        },
-        body
-    );
+    // --------------------------------------------------------
+    // PNG
+    // --------------------------------------------------------
 
     if (
-        response.status < 200 ||
-        response.status >= 300
+        buffer.length >= 8 &&
+        buffer[0] === 0x89 &&
+        buffer[1] === 0x50 &&
+        buffer[2] === 0x4E &&
+        buffer[3] === 0x47 &&
+        buffer[4] === 0x0D &&
+        buffer[5] === 0x0A &&
+        buffer[6] === 0x1A &&
+        buffer[7] === 0x0A
     ) {
-        throw new Error(
-            `DocuFlow login failed. HTTP ${response.status}\n` +
-            JSON.stringify(response.data, null, 2)
-        );
+
+        return {
+            extension: ".png",
+            mimeType: "image/png"
+        };
     }
 
-    console.log("DocuFlow login successful.");
 
-    console.log(
-        "Login response:",
-        JSON.stringify(response.data, null, 2)
-    );
-
-    const data = response.data || {};
-
-    /*
-     * Support common token response formats.
-     */
-
-    const token =
-        data.access_token ||
-        data.accessToken ||
-        data.token ||
-        data.service_token ||
-        data.serviceToken ||
-        data.data?.access_token ||
-        data.data?.accessToken ||
-        data.data?.token;
-
-    if (!token) {
-
-        throw new Error(
-            "DocuFlow login succeeded, but no authentication token " +
-            "was found in the login response."
-        );
-    }
-
-    console.log("");
-    console.log("DocuFlow authentication token received.");
-    console.log("Token validity: expected approximately 60 minutes.");
-
-    return token;
-}
-
-
-// ============================================================
-// CREATE DOCUFLOW RECORD
-// ============================================================
-
-async function createDocuFlowRecord(record, token) {
-
-    console.log("");
-    console.log("Creating DocuFlow record...");
-
-    const body = JSON.stringify({
-
-        document_number:
-            record["Invoice Number"] || "",
-
-        invoice_number:
-            record["Invoice Number"] || "",
-
-        vendor_name:
-            record["Dealer/Distributor Name"] ||
-            "Unknown Vendor",
-
-        amount: 1,
-
-        base_amount: 1,
-
-        tax_amount: 0,
-
-        currency: "INR",
-
-        division: "VCC",
-
-        auto_route: false,
-
-        metadata: {
-
-            account_name:
-                record["Account Name"] || "",
-
-            business_partner_code:
-                record["Business Partner Code"] || "",
-
-            employee_name:
-                record["Employee Name"] || "",
-
-            employee_id:
-                record["Employee ID"] || "",
-
-            employee_division:
-                record["Employee Division"] || "",
-
-            employee_segment:
-                record["Employee Segment"] || "",
-
-            survey_date:
-                record["Survey Date"] || "",
-
-            subtype_of_complaint:
-                record["Subtype of complaint"] || "",
-
-            additional_comments:
-                record["Additional Comments"] || "",
-
-            dealer_distributor_name:
-                record["Dealer/Distributor Name"] || "",
-
-            bp_type:
-                record["BP Type"] || "",
-
-            type_of_complaint:
-                record["Type of Complaint"] || "",
-
-            customer_code:
-                record["Customer Code"] || ""
-        }
-    });
-
-    const response = await httpRequest(
-        DOCUFLOW_SYNC_URL,
-        {
-            method: "POST",
-
-            headers: {
-
-                "Content-Type":
-                    "application/json",
-
-                "Authorization":
-                    `Bearer ${token}`,
-
-                "Content-Length":
-                    Buffer.byteLength(body)
-            }
-        },
-        body
-    );
+    // --------------------------------------------------------
+    // GIF
+    // --------------------------------------------------------
 
     if (
-        response.status < 200 ||
-        response.status >= 300
+        buffer.length >= 6 &&
+        (
+            buffer
+                .subarray(0, 6)
+                .toString("ascii") === "GIF87a" ||
+            buffer
+                .subarray(0, 6)
+                .toString("ascii") === "GIF89a"
+        )
     ) {
 
-        throw new Error(
-            `DocuFlow record creation failed. HTTP ${response.status}\n` +
-            JSON.stringify(response.data, null, 2)
-        );
+        return {
+            extension: ".gif",
+            mimeType: "image/gif"
+        };
     }
 
-    console.log("");
-    console.log("DocuFlow record created.");
 
-    console.log(
-        "Response:",
-        JSON.stringify(response.data, null, 2)
-    );
+    // --------------------------------------------------------
+    // WEBP
+    // --------------------------------------------------------
 
-    return response.data;
+    if (
+        buffer.length >= 12 &&
+        buffer
+            .subarray(0, 4)
+            .toString("ascii") === "RIFF" &&
+        buffer
+            .subarray(8, 12)
+            .toString("ascii") === "WEBP"
+    ) {
+
+        return {
+            extension: ".webp",
+            mimeType: "image/webp"
+        };
+    }
+
+
+    // --------------------------------------------------------
+    // BMP
+    // --------------------------------------------------------
+
+    if (
+        buffer.length >= 2 &&
+        buffer[0] === 0x42 &&
+        buffer[1] === 0x4D
+    ) {
+
+        return {
+            extension: ".bmp",
+            mimeType: "image/bmp"
+        };
+    }
+
+
+    return null;
 }
 
 
 // ============================================================
-// WAIT FOR NEW CHROME DOWNLOAD
+// DOWNLOAD FOLDER HELPERS
 // ============================================================
 
-function waitForNewDownload(
-    startTime,
-    timeoutSeconds = 30
+function listDownloadFiles() {
+
+    if (
+        !fs.existsSync(
+            CHROME_DOWNLOADS_DIR
+        )
+    ) {
+        return new Map();
+    }
+
+
+    const files =
+        fs.readdirSync(
+            CHROME_DOWNLOADS_DIR,
+            {
+                withFileTypes: true
+            }
+        );
+
+
+    const result =
+        new Map();
+
+
+    for (
+        const entry of files
+    ) {
+
+        if (
+            !entry.isFile()
+        ) {
+            continue;
+        }
+
+
+        const fullPath =
+            path.join(
+                CHROME_DOWNLOADS_DIR,
+                entry.name
+            );
+
+
+        try {
+
+            const stat =
+                fs.statSync(
+                    fullPath
+                );
+
+
+            result.set(
+                entry.name,
+                {
+                    path: fullPath,
+                    size: stat.size,
+                    mtimeMs: stat.mtimeMs
+                }
+            );
+
+        } catch {
+            // File may disappear while Chrome is downloading.
+        }
+    }
+
+
+    return result;
+}
+
+
+function isTemporaryDownload(
+    filename
 ) {
 
-    return new Promise((resolve, reject) => {
+    const lower =
+        filename.toLowerCase();
 
-        let elapsed = 0;
 
-        const interval = setInterval(() => {
+    return (
+        lower.endsWith(".crdownload") ||
+        lower.endsWith(".tmp") ||
+        lower.endsWith(".part")
+    );
+}
 
-            elapsed++;
 
-            let files = [];
+function isImageFilename(
+    filename
+) {
 
-            try {
+    const lower =
+        filename.toLowerCase();
 
-                files = fs.readdirSync(
-                    DOWNLOAD_DIR
+
+    return (
+        lower.endsWith(".jpg") ||
+        lower.endsWith(".jpeg") ||
+        lower.endsWith(".png") ||
+        lower.endsWith(".gif") ||
+        lower.endsWith(".webp") ||
+        lower.endsWith(".bmp")
+    );
+}
+
+
+async function waitForNewChromeDownload(
+    beforeFiles,
+    timeoutMs = 60000
+) {
+
+    console.log("");
+    console.log(
+        "Waiting for Salesforce file in Chrome Downloads..."
+    );
+
+    console.log(
+        CHROME_DOWNLOADS_DIR
+    );
+
+
+    const start =
+        Date.now();
+
+
+    while (
+        Date.now() - start <
+        timeoutMs
+    ) {
+
+        const currentFiles =
+            listDownloadFiles();
+
+
+        const candidates = [];
+
+
+        for (
+            const [
+                name,
+                info
+            ] of currentFiles.entries()
+        ) {
+
+            if (
+                beforeFiles.has(name)
+            ) {
+                continue;
+            }
+
+
+            if (
+                isTemporaryDownload(name)
+            ) {
+                continue;
+            }
+
+
+            candidates.push({
+                name,
+                ...info
+            });
+        }
+
+
+        // Prefer image files.
+        candidates.sort(
+            (a, b) => {
+
+                const aImage =
+                    isImageFilename(
+                        a.name
+                    );
+
+                const bImage =
+                    isImageFilename(
+                        b.name
+                    );
+
+
+                if (
+                    aImage &&
+                    !bImage
+                ) {
+                    return -1;
+                }
+
+
+                if (
+                    !aImage &&
+                    bImage
+                ) {
+                    return 1;
+                }
+
+
+                return (
+                    b.mtimeMs -
+                    a.mtimeMs
+                );
+            }
+        );
+
+
+        if (
+            candidates.length > 0
+        ) {
+
+            const candidate =
+                candidates[0];
+
+
+            const firstSize =
+                candidate.size;
+
+
+            // Give Chrome time to finish writing.
+            await sleep(1000);
+
+
+            if (
+                !fs.existsSync(
+                    candidate.path
                 )
-                .map(fileName => {
+            ) {
+                continue;
+            }
 
-                    const fullPath =
-                        path.join(
-                            DOWNLOAD_DIR,
-                            fileName
-                        );
 
-                    try {
-
-                        const stat =
-                            fs.statSync(fullPath);
-
-                        return {
-                            fileName,
-                            fullPath,
-                            stat
-                        };
-
-                    }
-                    catch (_) {
-
-                        return null;
-                    }
-                })
-                .filter(Boolean)
-                .filter(item =>
-                    item.stat.isFile()
-                )
-                .filter(item =>
-                    item.stat.mtimeMs >= startTime
-                )
-                .filter(item =>
-                    !item.fileName.endsWith(".crdownload")
-                )
-                .sort(
-                    (a, b) =>
-                        b.stat.mtimeMs -
-                        a.stat.mtimeMs
+            const secondStat =
+                fs.statSync(
+                    candidate.path
                 );
 
-            }
-            catch (_) {
-            }
 
-            if (files.length > 0) {
+            if (
+                secondStat.size ===
+                    firstSize &&
+                secondStat.size > 0
+            ) {
 
-                clearInterval(interval);
-
-                resolve(files[0]);
-
-                return;
-            }
-
-            if (elapsed >= timeoutSeconds) {
-
-                clearInterval(interval);
-
-                reject(
-                    new Error(
-                        `No new downloaded file found in:\n${DOWNLOAD_DIR}`
-                    )
+                console.log("");
+                console.log(
+                    "New Chrome download found:"
                 );
-            }
 
-        }, 1000);
-    });
+                console.log(
+                    candidate.path
+                );
+
+
+                console.log("");
+                console.log(
+                    "Downloaded size:"
+                );
+
+                console.log(
+                    secondStat.size,
+                    "bytes"
+                );
+
+
+                return candidate.path;
+            }
+        }
+
+
+        await sleep(1000);
+    }
+
+
+    return null;
 }
 
 
@@ -393,28 +464,170 @@ function waitForNewDownload(
 
 async function downloadSalesforceImage(
     imageUrl,
-    imageNumber
+    outputFile
 ) {
 
     console.log("");
     console.log(
-        `Downloading Salesforce Image ${imageNumber}...`
+        "========================================"
     );
 
-    const playwrightFile = path.join(
-        TEMP_DIR,
-        `open-image-${imageNumber}.js`
+    console.log(
+        " DOWNLOADING SALESFORCE IMAGE"
     );
 
-    const script = `
+    console.log(
+        "========================================"
+    );
+
+
+    console.log("");
+    console.log(
+        "Salesforce URL:"
+    );
+
+    console.log(
+        imageUrl
+    );
+
+
+    console.log("");
+    console.log(
+        "Output file:"
+    );
+
+    console.log(
+        outputFile
+    );
+
+
+    console.log("");
+    console.log(
+        "Chrome Downloads folder:"
+    );
+
+    console.log(
+        CHROME_DOWNLOADS_DIR
+    );
+
+
+    fs.mkdirSync(
+        IMAGE_DIR,
+        {
+            recursive: true
+        }
+    );
+
+
+    fs.mkdirSync(
+        CHROME_DOWNLOADS_DIR,
+        {
+            recursive: true
+        }
+    );
+
+
+    // --------------------------------------------------------
+    // REMOVE OLD OUTPUT IMAGE
+    // --------------------------------------------------------
+
+    if (
+        fs.existsSync(
+            outputFile
+        )
+    ) {
+
+        fs.unlinkSync(
+            outputFile
+        );
+
+
+        console.log("");
+        console.log(
+            "Removed previous output image."
+        );
+    }
+
+
+    // --------------------------------------------------------
+    // RECORD CURRENT DOWNLOADS
+    // --------------------------------------------------------
+
+    const beforeFiles =
+        listDownloadFiles();
+
+
+    // --------------------------------------------------------
+    // CREATE TEMPORARY PLAYWRIGHT SCRIPT
+    // --------------------------------------------------------
+
+    const tempScript =
+        path.join(
+            IMAGE_DIR,
+            `salesforce-image-${Date.now()}.js`
+        );
+
+
+    /*
+     * IMPORTANT:
+     *
+     * playwright-cli run-code expects the file
+     * itself to be a function expression.
+     *
+     * Therefore the generated file MUST be:
+     *
+     * async page => {
+     *     ...
+     * }
+     *
+     * NOT:
+     *
+     * await (async page => {
+     *     ...
+     * })(page);
+     */
+
+
+    const playwrightScript = `
 async page => {
 
     const imageUrl =
         ${JSON.stringify(imageUrl)};
 
+
+    console.log("");
     console.log(
-        "Opening Salesforce image URL..."
+        "========================================"
     );
+
+    console.log(
+        " SALESFORCE IMAGE DOWNLOAD"
+    );
+
+    console.log(
+        "========================================"
+    );
+
+
+    console.log("");
+    console.log(
+        "Current Salesforce page:"
+    );
+
+    console.log(
+        await page.url()
+    );
+
+
+    console.log("");
+    console.log(
+        "Opening Salesforce image URL:"
+    );
+
+    console.log(
+        imageUrl
+    );
+
 
     try {
 
@@ -422,46 +635,86 @@ async page => {
             imageUrl,
             {
                 waitUntil: "commit",
-                timeout: 30000
+                timeout: 60000
             }
         );
 
-    }
-    catch (error) {
 
+        console.log("");
         console.log(
-            "Salesforce download navigation triggered."
+            "Salesforce image URL opened."
+        );
+
+    } catch (error) {
+
+        console.log("");
+        console.log(
+            "Salesforce navigation message:"
         );
 
         console.log(
             error.message
         );
+
+
+        console.log("");
+        console.log(
+            "The browser may have started the download."
+        );
     }
 
+
+    console.log("");
     console.log(
-        "Salesforce image URL processed."
+        "Salesforce image request completed."
     );
 }
 `;
 
+
     fs.writeFileSync(
-        playwrightFile,
-        script,
+        tempScript,
+        playwrightScript,
         "utf8"
     );
 
-    const startTime = Date.now();
-
-    const command =
-        `playwright-cli -s=chrome run-code --filename="${playwrightFile}"`;
 
     console.log("");
-    console.log("Running Playwright:");
-    console.log(command);
+    console.log(
+        "Temporary Playwright script:"
+    );
+
+    console.log(
+        tempScript
+    );
+
+
+    console.log("");
+    console.log(
+        "Running Playwright:"
+    );
+
+
+    const command =
+        `playwright-cli -s=chrome run-code --filename="${tempScript}"`;
+
+
+    console.log(
+        command
+    );
+
+
+    // --------------------------------------------------------
+    // RUN PLAYWRIGHT
+    // --------------------------------------------------------
+
+    let playwrightFailed =
+        false;
+
 
     try {
 
-        const output =
+        const stdout =
             execSync(
                 command,
                 {
@@ -473,133 +726,601 @@ async page => {
                 }
             );
 
-        console.log(output);
-    }
-    catch (error) {
 
-        /*
-         * "Download is starting" is expected
-         * for Salesforce Shepherd download URLs.
-         */
-
-        const output =
-            (error.stdout || "") +
-            "\n" +
-            (error.stderr || "");
-
-        console.log(output);
-    }
-
-    console.log("");
-    console.log(
-        "Waiting for Salesforce download..."
-    );
-
-    const downloaded =
-        await waitForNewDownload(
-            startTime,
-            30
+        console.log("");
+        console.log(
+            "Playwright output:"
         );
 
+        console.log(
+            stdout
+        );
+
+    } catch (error) {
+
+        playwrightFailed =
+            true;
+
+
+        console.log("");
+        console.log(
+            "Playwright returned an error/message:"
+        );
+
+
+        if (
+            error.stdout
+        ) {
+
+            console.log(
+                error.stdout.toString()
+            );
+        }
+
+
+        if (
+            error.stderr
+        ) {
+
+            console.log(
+                error.stderr.toString()
+            );
+        }
+
+
+        console.log("");
+        console.log(
+            "Continuing to inspect Chrome Downloads..."
+        );
+    }
+
+
+    // --------------------------------------------------------
+    // WAIT FOR DOWNLOAD
+    // --------------------------------------------------------
+
+    const downloadedFile =
+        await waitForNewChromeDownload(
+            beforeFiles,
+            60000
+        );
+
+
+    if (
+        !downloadedFile
+    ) {
+
+        console.log("");
+        console.log(
+            "========================================"
+        );
+
+        console.log(
+            " FAILED"
+        );
+
+        console.log(
+            "========================================"
+        );
+
+
+        console.log("");
+        console.log(
+            "No new file was found in:"
+        );
+
+        console.log(
+            CHROME_DOWNLOADS_DIR
+        );
+
+
+        console.log("");
+        console.log(
+            "Playwright error occurred:",
+            playwrightFailed
+        );
+
+
+        console.log("");
+        console.log(
+            "Check Chrome Downloads manually."
+        );
+
+
+        throw new Error(
+            "Salesforce image was not found in Chrome Downloads folder."
+        );
+    }
+
+
+    // --------------------------------------------------------
+    // READ DOWNLOADED FILE
+    // --------------------------------------------------------
+
+    const buffer =
+        fs.readFileSync(
+            downloadedFile
+        );
+
+
+    if (
+        buffer.length === 0
+    ) {
+
+        throw new Error(
+            "Salesforce downloaded an empty file."
+        );
+    }
+
+
+    // --------------------------------------------------------
+    // VERIFY IMAGE TYPE
+    // --------------------------------------------------------
+
+    const imageType =
+        detectImageType(
+            buffer
+        );
+
+
+    if (
+        !imageType
+    ) {
+
+        console.log("");
+        console.log(
+            "Downloaded file is NOT recognized as an image."
+        );
+
+
+        console.log("");
+        console.log(
+            "Downloaded file:"
+        );
+
+        console.log(
+            downloadedFile
+        );
+
+
+        console.log("");
+        console.log(
+            "Downloaded size:"
+        );
+
+        console.log(
+            buffer.length,
+            "bytes"
+        );
+
+
+        console.log("");
+        console.log(
+            "First bytes:"
+        );
+
+
+        console.log(
+            Array.from(
+                buffer.subarray(
+                    0,
+                    Math.min(
+                        buffer.length,
+                        64
+                    )
+                )
+            )
+                .map(
+                    byte =>
+                        byte
+                            .toString(16)
+                            .padStart(
+                                2,
+                                "0"
+                            )
+                )
+                .join(" ")
+        );
+
+
+        throw new Error(
+            "Salesforce downloaded a file, but it is not a valid image."
+        );
+    }
+
+
+    // --------------------------------------------------------
+    // COPY IMAGE TO PROJECT
+    // --------------------------------------------------------
+
+    fs.copyFileSync(
+        downloadedFile,
+        outputFile
+    );
+
+
+    // --------------------------------------------------------
+    // VERIFY OUTPUT
+    // --------------------------------------------------------
+
+    if (
+        !fs.existsSync(
+            outputFile
+        )
+    ) {
+
+        throw new Error(
+            "Image was downloaded but could not be copied to project."
+        );
+    }
+
+
+    const outputBuffer =
+        fs.readFileSync(
+            outputFile
+        );
+
+
+    if (
+        outputBuffer.length === 0
+    ) {
+
+        throw new Error(
+            "Copied image file is empty."
+        );
+    }
+
+
+    const outputImageType =
+        detectImageType(
+            outputBuffer
+        );
+
+
+    if (
+        !outputImageType
+    ) {
+
+        throw new Error(
+            "Copied file is not a valid image."
+        );
+    }
+
+
     console.log("");
     console.log(
-        "Salesforce download found:"
+        "========================================"
     );
 
     console.log(
-        downloaded.fullPath
+        " REAL IMAGE RECEIVED"
     );
 
-    return downloaded.fullPath;
+    console.log(
+        "========================================"
+    );
+
+
+    console.log("");
+    console.log(
+        "Downloaded from:"
+    );
+
+    console.log(
+        downloadedFile
+    );
+
+
+    console.log("");
+    console.log(
+        "Image type:"
+    );
+
+    console.log(
+        outputImageType.mimeType
+    );
+
+
+    console.log("");
+    console.log(
+        "Image size:"
+    );
+
+    console.log(
+        outputBuffer.length,
+        "bytes"
+    );
+
+
+    console.log("");
+    console.log(
+        "Saved to:"
+    );
+
+    console.log(
+        outputFile
+    );
+
+
+    // --------------------------------------------------------
+    // REMOVE TEMPORARY CHROME DOWNLOAD
+    // --------------------------------------------------------
+
+    try {
+
+        fs.unlinkSync(
+            downloadedFile
+        );
+
+
+        console.log("");
+        console.log(
+            "Temporary Chrome download removed."
+        );
+
+    } catch (error) {
+
+        console.log("");
+        console.log(
+            "Could not remove temporary Chrome download:"
+        );
+
+        console.log(
+            error.message
+        );
+    }
+
+
+    // --------------------------------------------------------
+    // REMOVE TEMP PLAYWRIGHT SCRIPT
+    // --------------------------------------------------------
+
+    try {
+
+        fs.unlinkSync(
+            tempScript
+        );
+
+    } catch {
+        // Ignore cleanup failure.
+    }
+
+
+    return outputFile;
 }
 
 
 // ============================================================
-// CONVERT IMAGE TO JPEG
+// DOCUFLOW LOGIN
 // ============================================================
 
-async function convertImageToJpeg(
-    sourcePath,
-    imageNumber
-) {
-
-    const outputPath = path.join(
-        TEMP_DIR,
-        `salesforce-image-${imageNumber}.jpg`
-    );
+async function loginToDocuFlow() {
 
     console.log("");
     console.log(
-        `Converting Image ${imageNumber} to JPEG...`
+        "========================================"
     );
 
-    await sharp(sourcePath)
-        .jpeg({
-            quality: 90
-        })
-        .toFile(outputPath);
+    console.log(
+        " LOGGING INTO DOCUFLOW"
+    );
 
-    if (!fs.existsSync(outputPath)) {
+    console.log(
+        "========================================"
+    );
+
+
+    const loginUrl =
+        `${DOCUFLOW_BASE_URL}/api/auth/login`;
+
+
+    const response =
+        await fetch(
+            loginUrl,
+            {
+                method: "POST",
+
+                headers: {
+                    "Content-Type":
+                        "application/json"
+                },
+
+                body:
+                    JSON.stringify({
+                        username:
+                            DOCUFLOW_USERNAME,
+
+                        password:
+                            DOCUFLOW_PASSWORD
+                    })
+            }
+        );
+
+
+    const responseText =
+        await response.text();
+
+
+    if (
+        !response.ok
+    ) {
 
         throw new Error(
-            "JPEG conversion failed. Output file was not created."
+            `DocuFlow login failed (${response.status}): ${responseText}`
         );
     }
 
-    const stat =
-        fs.statSync(outputPath);
 
-    if (stat.size === 0) {
+    let data;
+
+
+    try {
+
+        data =
+            JSON.parse(
+                responseText
+            );
+
+    } catch {
 
         throw new Error(
-            "JPEG conversion failed. Output file is empty."
+            "DocuFlow login returned invalid JSON:\n" +
+            responseText
         );
     }
 
+
+    const token =
+        data.access_token ||
+        data.token;
+
+
+    if (
+        !token
+    ) {
+
+        throw new Error(
+            "DocuFlow login succeeded but no token was returned."
+        );
+    }
+
+
+    console.log("");
     console.log(
-        "Converted image:"
+        "DocuFlow login successful."
     );
 
-    console.log(outputPath);
 
-    console.log(
-        `JPEG size: ${stat.size} bytes`
-    );
-
-    return outputPath;
+    return token;
 }
 
 
 // ============================================================
-// UPLOAD ATTACHMENT
+// UPLOAD IMAGE TO DOCUFLOW
 // ============================================================
 
-async function uploadAttachment(
+async function uploadImage(
+    token,
     documentId,
-    imagePath,
-    imageNumber,
-    token
+    imageFile
 ) {
+
+    console.log("");
+    console.log(
+        "========================================"
+    );
+
+    console.log(
+        " UPLOADING IMAGE TO DOCUFLOW"
+    );
+
+    console.log(
+        "========================================"
+    );
+
+
+    if (
+        !fs.existsSync(
+            imageFile
+        )
+    ) {
+
+        throw new Error(
+            `Image file not found: ${imageFile}`
+        );
+    }
+
 
     const fileBuffer =
-        fs.readFileSync(imagePath);
+        fs.readFileSync(
+            imageFile
+        );
+
+
+    if (
+        fileBuffer.length === 0
+    ) {
+
+        throw new Error(
+            "Image file is empty."
+        );
+    }
+
+
+    const imageType =
+        detectImageType(
+            fileBuffer
+        );
+
+
+    if (
+        !imageType
+    ) {
+
+        throw new Error(
+            "Image file is not a valid image."
+        );
+    }
+
 
     const base64 =
-        fileBuffer.toString("base64");
+        fileBuffer.toString(
+            "base64"
+        );
+
 
     const fileName =
-        path.basename(imagePath);
+        path.basename(
+            imageFile
+        );
 
-    const attachmentUrl =
-        `http://192.168.179.22:3000/api/sync/record/` +
-        `${encodeURIComponent(documentId)}/attachment/base64`;
 
     console.log("");
     console.log(
-        `Uploading Image ${imageNumber} to DocuFlow...`
+        "File name:"
     );
 
-    const body = JSON.stringify({
+    console.log(
+        fileName
+    );
+
+
+    console.log("");
+    console.log(
+        "Image type:"
+    );
+
+    console.log(
+        imageType.mimeType
+    );
+
+
+    console.log("");
+    console.log(
+        "Image size:"
+    );
+
+    console.log(
+        fileBuffer.length,
+        "bytes"
+    );
+
+
+    const url =
+        `${DOCUFLOW_BASE_URL}/api/sync/record/${encodeURIComponent(documentId)}/attachment/base64`;
+
+
+    console.log("");
+    console.log(
+        "Attachment endpoint:"
+    );
+
+    console.log(
+        url
+    );
+
+
+    const payload = {
 
         file_name:
             fileName,
@@ -612,51 +1333,63 @@ async function uploadAttachment(
 
         uploaded_by:
             "Salesforce Automation"
-    });
+    };
 
-    const response = await httpRequest(
-        attachmentUrl,
-        {
-            method: "POST",
 
-            headers: {
+    const response =
+        await fetch(
+            url,
+            {
+                method: "POST",
 
-                "Content-Type":
-                    "application/json",
+                headers: {
 
-                "Authorization":
-                    `Bearer ${token}`,
+                    "Content-Type":
+                        "application/json",
 
-                "Content-Length":
-                    Buffer.byteLength(body)
+                    "Authorization":
+                        `Bearer ${token}`
+                },
+
+                body:
+                    JSON.stringify(
+                        payload
+                    )
             }
-        },
-        body
-    );
-
-    if (
-        response.status < 200 ||
-        response.status >= 300
-    ) {
-
-        throw new Error(
-            `Attachment upload failed. HTTP ${response.status}\n` +
-            JSON.stringify(response.data, null, 2)
         );
-    }
+
+
+    const responseText =
+        await response.text();
+
 
     console.log("");
     console.log(
-        `Image ${imageNumber} uploaded successfully.`
+        `DocuFlow HTTP status: ${response.status}`
+    );
+
+
+    console.log("");
+    console.log(
+        "DocuFlow response:"
     );
 
     console.log(
-        JSON.stringify(
-            response.data,
-            null,
-            2
-        )
+        responseText
     );
+
+
+    if (
+        !response.ok
+    ) {
+
+        throw new Error(
+            `DocuFlow image upload failed (${response.status}): ${responseText}`
+        );
+    }
+
+
+    return responseText;
 }
 
 
@@ -664,274 +1397,303 @@ async function uploadAttachment(
 // MAIN
 // ============================================================
 
-async function main() {
+(async () => {
 
     console.log("");
-    console.log("========================================");
-    console.log(" Salesforce → DocuFlow");
-    console.log(" Survey Image Upload");
-    console.log("========================================");
+    console.log(
+        "========================================"
+    );
 
-    console.log("");
-    console.log("Reading Excel:");
-    console.log(EXCEL_FILE);
+    console.log(
+        " Salesforce → DocuFlow"
+    );
 
-    if (!fs.existsSync(EXCEL_FILE)) {
+    console.log(
+        " Survey Image Upload"
+    );
 
-        throw new Error(
-            `Excel file not found:\n${EXCEL_FILE}`
+    console.log(
+        "========================================"
+    );
+
+
+    try {
+
+        // ----------------------------------------------------
+        // READ EXCEL
+        // ----------------------------------------------------
+
+        console.log("");
+        console.log(
+            "Reading Excel:"
         );
-    }
 
-    const workbook =
-        XLSX.readFile(EXCEL_FILE);
+        console.log(
+            EXCEL_FILE
+        );
 
-    const sheet =
-        workbook.Sheets[
-            workbook.SheetNames[0]
-        ];
 
-    const rows =
-        XLSX.utils.sheet_to_json(
-            sheet,
+        if (
+            !fs.existsSync(
+                EXCEL_FILE
+            )
+        ) {
+
+            throw new Error(
+                `Excel file not found:\n${EXCEL_FILE}`
+            );
+        }
+
+
+        const workbook =
+            xlsx.readFile(
+                EXCEL_FILE
+            );
+
+
+        const sheetName =
+            workbook.SheetNames[0];
+
+
+        if (
+            !sheetName
+        ) {
+
+            throw new Error(
+                "Excel workbook has no sheets."
+            );
+        }
+
+
+        const worksheet =
+            workbook.Sheets[
+                sheetName
+            ];
+
+
+        const rows =
+            xlsx.utils.sheet_to_json(
+                worksheet,
+                {
+                    defval: ""
+                }
+            );
+
+
+        if (
+            rows.length < 3
+        ) {
+
+            throw new Error(
+                "Excel does not contain record #3."
+            );
+        }
+
+
+        // ----------------------------------------------------
+        // SELECT RECORD #3
+        // ----------------------------------------------------
+
+        const row =
+            rows[2];
+
+
+        console.log("");
+        console.log(
+            "Using Excel record #3:"
+        );
+
+
+        console.log(
+            JSON.stringify(
+                row,
+                null,
+                2
+            )
+        );
+
+
+        // ----------------------------------------------------
+        // IMAGE 1
+        // ----------------------------------------------------
+
+        const imageUrl =
+            cleanValue(
+                row["Image 1"]
+            );
+
+
+        if (
+            !imageUrl
+        ) {
+
+            throw new Error(
+                "Image 1 is empty in Excel."
+            );
+        }
+
+
+        console.log("");
+        console.log(
+            "Image 1 URL found."
+        );
+
+
+        // ----------------------------------------------------
+        // IMAGE OUTPUT DIRECTORY
+        // ----------------------------------------------------
+
+        fs.mkdirSync(
+            IMAGE_DIR,
             {
-                defval: ""
+                recursive: true
             }
         );
 
-    if (rows.length < RECORD_NUMBER) {
 
-        throw new Error(
-            `Excel contains only ${rows.length} records.`
-        );
-    }
-
-    const record =
-        rows[RECORD_NUMBER - 1];
-
-    console.log("");
-    console.log(
-        `Using Excel record #${RECORD_NUMBER}`
-    );
-
-    console.log(
-        JSON.stringify(
-            record,
-            null,
-            2
-        )
-    );
+        const outputFile =
+            path.join(
+                IMAGE_DIR,
+                "survey-image-1.jpg"
+            );
 
 
-    // ========================================================
-    // STEP 1
-    // DOWNLOAD + CONVERT ALL SALESFORCE IMAGES FIRST
-    // ========================================================
+        if (
+            fs.existsSync(
+                outputFile
+            )
+        ) {
 
-    console.log("");
-    console.log("========================================");
-    console.log(" STEP 1: PROCESS SALESFORCE IMAGES");
-    console.log("========================================");
+            fs.unlinkSync(
+                outputFile
+            );
 
-    const convertedImages = [];
-
-    for (let i = 1; i <= 5; i++) {
-
-        const columnName =
-            `Image ${i}`;
-
-        const imageUrl =
-            String(
-                record[columnName] || ""
-            ).trim();
-
-        if (!imageUrl) {
 
             console.log("");
             console.log(
-                `Image ${i}: empty`
+                "Old survey image removed."
             );
-
-            continue;
         }
+
+
+        // ----------------------------------------------------
+        // DOWNLOAD SALESFORCE IMAGE
+        // ----------------------------------------------------
 
         console.log("");
-        console.log("----------------------------------------");
-        console.log(`IMAGE ${i}`);
-        console.log("----------------------------------------");
-
         console.log(
-            "Salesforce URL:"
+            "Downloading Salesforce Image 1..."
         );
 
-        console.log(imageUrl);
 
-        try {
+        await downloadSalesforceImage(
+            imageUrl,
+            outputFile
+        );
 
-            const downloadedPath =
-                await downloadSalesforceImage(
-                    imageUrl,
-                    i
-                );
 
-            const convertedPath =
-                await convertImageToJpeg(
-                    downloadedPath,
-                    i
-                );
+        // ----------------------------------------------------
+        // LOGIN DOCUFLOW
+        // ----------------------------------------------------
 
-            convertedImages.push({
-                imageNumber: i,
-                path: convertedPath
-            });
+        const token =
+            await loginToDocuFlow();
 
-        }
-        catch (error) {
 
-            throw new Error(
-                `Image ${i} could not be downloaded and converted.\n` +
-                error.message +
-                "\n\nDocuFlow record will NOT be created."
-            );
-        }
+        // ----------------------------------------------------
+        // UPLOAD IMAGE
+        // ----------------------------------------------------
+
+        await uploadImage(
+            token,
+            DOCUFLOW_DOCUMENT_ID,
+            outputFile
+        );
+
+
+        // ----------------------------------------------------
+        // SUCCESS
+        // ----------------------------------------------------
+
+        console.log("");
+        console.log(
+            "========================================"
+        );
+
+        console.log(
+            " SUCCESS"
+        );
+
+        console.log(
+            "========================================"
+        );
+
+
+        console.log("");
+        console.log(
+            "Salesforce Image 1 downloaded successfully."
+        );
+
+
+        console.log("");
+        console.log(
+            "Image uploaded to DocuFlow successfully."
+        );
+
+
+        console.log("");
+        console.log(
+            "DocuFlow Record:"
+        );
+
+        console.log(
+            DOCUFLOW_DOCUMENT_ID
+        );
+
+
+        console.log("");
+        console.log(
+            "Local image:"
+        );
+
+        console.log(
+            outputFile
+        );
+
+
+        console.log("");
+        console.log(
+            "Done."
+        );
+
+    } catch (error) {
+
+        console.log("");
+        console.log(
+            "========================================"
+        );
+
+        console.log(
+            " AUTOMATION FAILED"
+        );
+
+        console.log(
+            "========================================"
+        );
+
+
+        console.log("");
+
+
+        console.log(
+            error &&
+            error.stack
+                ? error.stack
+                : error
+        );
+
+
+        process.exitCode = 1;
     }
 
-
-    // ========================================================
-    // SAFETY CHECK
-    // ========================================================
-
-    console.log("");
-    console.log("========================================");
-    console.log(" IMAGE VALIDATION");
-    console.log("========================================");
-
-    for (const image of convertedImages) {
-
-        if (!fs.existsSync(image.path)) {
-
-            throw new Error(
-                `Converted image does not exist: ${image.path}`
-            );
-        }
-
-        const stat =
-            fs.statSync(image.path);
-
-        if (stat.size === 0) {
-
-            throw new Error(
-                `Converted image is empty: ${image.path}`
-            );
-        }
-
-        console.log(
-            `Image ${image.imageNumber}: READY`
-        );
-
-        console.log(
-            `  ${image.path}`
-        );
-
-        console.log(
-            `  ${stat.size} bytes`
-        );
-    }
-
-
-    // ========================================================
-    // STEP 2
-    // ONLY NOW LOGIN TO DOCUFLOW
-    // ========================================================
-
-    console.log("");
-    console.log("========================================");
-    console.log(" STEP 2: DOCUFLOW");
-    console.log("========================================");
-
-    const token =
-        await loginToDocuFlow();
-
-
-    // ========================================================
-    // STEP 3
-    // CREATE RECORD
-    // ========================================================
-
-    const docuFlowResponse =
-        await createDocuFlowRecord(
-            record,
-            token
-        );
-
-    const documentId =
-        docuFlowResponse.document_id;
-
-    console.log("");
-    console.log(
-        `DocuFlow Document ID: ${documentId}`
-    );
-
-
-    // ========================================================
-    // STEP 4
-    // UPLOAD CONVERTED IMAGES
-    // ========================================================
-
-    let uploaded = 0;
-
-    for (const image of convertedImages) {
-
-        await uploadAttachment(
-            documentId,
-            image.path,
-            image.imageNumber,
-            token
-        );
-
-        uploaded++;
-    }
-
-
-    // ========================================================
-    // FINAL
-    // ========================================================
-
-    console.log("");
-    console.log("========================================");
-    console.log(" AUTOMATION COMPLETED");
-    console.log("========================================");
-
-    console.log("");
-    console.log(
-        `DocuFlow Document ID: ${documentId}`
-    );
-
-    console.log(
-        `Images uploaded: ${uploaded}`
-    );
-
-    console.log("");
-    console.log(
-        "All required images were converted before " +
-        "the DocuFlow record was created."
-    );
-}
-
-
-main().catch(error => {
-
-    console.error("");
-    console.error("========================================");
-    console.error(" AUTOMATION FAILED");
-    console.error("========================================");
-    console.error("");
-
-    console.error(
-        error.message || error
-    );
-
-    console.error("");
-
-    process.exit(1);
-});
+})();
